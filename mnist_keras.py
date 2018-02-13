@@ -27,11 +27,11 @@ epochs = 10
 
 
 # the data, shuffled and split between train and test sets
-#(x_train, y_train), (x_test, y_test) = mnist.load_data()
-(x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+#(x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
 #(x_train, y_train), (x_test, y_test) = cifar10.load_data()
-debug=True
-if debug:
+use_subset=False
+if use_subset:
     x_train=x_train[1:2000,]
     y_train=y_train[1:2000,]
 # input image dimensions
@@ -64,9 +64,9 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 model = Sequential()
 enable_gauss = True
 if enable_gauss:
-    model.add(GaussScaler(rank=2,filters=12,kernel_size=(3,3), 
+    model.add(GaussScaler(rank=2,filters=12,kernel_size=(7,7), 
                           input_shape=input_shape, 
-                          padding='same',name='input'))
+                          padding='same',name='gauss'))
 
     model.add(Conv2D(30, kernel_size=(3, 3),
                  activation='relu'))#, input_shape=input_shape))
@@ -76,8 +76,7 @@ else:
     model.add(Conv2D(32, kernel_size=(3, 3),
                      activation='relu', input_shape=input_shape))
 
-#model.add(Conv2D(32, kernel_size=(3, 3),
-#                 activation='relu'))#, input_shape=input_shape))
+
 model.add(Conv2D(64, (3, 3), activation='relu'))
 model.add(MaxPooling2D(pool_size=(2, 2)))
 model.add(Dropout(0.25))
@@ -87,16 +86,17 @@ model.add(Dropout(0.5))
 model.add(Dense(num_classes, activation='softmax'))
 model.summary()
 
+# this is supposed write the training data.
 tb_call_back = keras.callbacks.TensorBoard(log_dir='./Graph', 
                                          histogram_freq=1, 
-                                         write_graph=True,
-                                         write_grads=True,
-                                         write_images=True)
+                                         write_graph=False,
+                                         write_grads=False,
+                                         write_images=False)
 #checkpoint = keras.callbacks.ModelCheckpoint('./Model' + '/weights-{epoch:02d}.h5', monitor='accuracy',
 #                                       save_best_only=True, save_weights_only=False, verbose=1)
 
 
-toptimizer = keras.optimizers.Adamax(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0)
+toptimizer = keras.optimizers.Adadelta(lr=1.0, rho=0.95, epsilon=None, decay=0.0)
 model.compile(loss=keras.losses.categorical_crossentropy,
               optimizer=toptimizer,
               metrics=['accuracy'])
@@ -105,7 +105,8 @@ model.fit(x_train, y_train,
           batch_size=batch_size,
           epochs=epochs,
           verbose=1,
-          validation_data=(x_test, y_test), callbacks=[tb_call_back])
+          validation_data=(x_test, y_test), callbacks=[])
+model.get_output_at('gauss')
 score = model.evaluate(x_test, y_test, verbose=0)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])

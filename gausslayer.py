@@ -8,7 +8,7 @@ Created on Tue Feb 13 19:07:34 2018
 from keras import backend as K
 from keras.engine.topology import Layer
 from keras.utils import conv_utils
-from keras import activations, regularizers
+from keras import activations, regularizers, constraints
 from keras.engine import InputSpec
 import numpy as np
 import tensorflow as tf
@@ -27,7 +27,7 @@ def idx_init(shape, dtype='float32'):
     return idxs
 
 def cov_init(shape, dtype='float32'):
-    cov = np.identity(shape[1], dtype)
+    cov = np.identity(shape[1], dtype)*0.25
     # shape [0] must have self.incoming_channels * self.num_filters
     cov = np.repeat(cov[np.newaxis], shape[0], axis=0)
     return cov
@@ -102,9 +102,10 @@ class GaussScaler(Layer):
         self.mu = mu.astype(dtype='float32')
 
         # Shared Parameters
-        # below works for two dimensional cov 
+        # below works for only two dimensional cov 
         self.cov = self.add_weight(shape=[input_dim*self.filters,2,2], 
-                                  name="cov", initializer=cov_init, trainable=True)
+                                  name="cov", initializer=cov_init, trainable=True,
+                                  constraint=constraints.non_neg())
         
         # below prepares a meshgrid. 
         self.idxs = self.add_weight(shape=[kernel_size[0]*kernel_size[1],2], 
@@ -116,10 +117,7 @@ class GaussScaler(Layer):
     def U(self):
         
         e1 = (self.idxs - self.mu)
-        #cov_inv = tf.zeros_like(self.cov)
-        
-        #for c in range(self.cov.shape[0]):
-        #     cov_inv[c,:] = tf.assign(tf.linalg.inv(self.cov[c]))
+     
         
         #print(self.cov.shape)
         #print(len(tf.unstack(self.cov,axis=0)))
@@ -128,21 +126,13 @@ class GaussScaler(Layer):
         cov_inv = tf.linalg.inv(self.cov)
         print(cov_inv)
         #cov_inv = K.map_fn(lambda x: tf.linalg.inv(x), elems=tf.unstack(self.cov,axis=0))
-        
-        #cov_inv, _ = tf.scan(lambda a, x: tf.linalg.inv(self.cov[x]),
-        #                         elems=tf.unstack(self.cov,axis=0), initializer=tf.zeros(self.cov.shape[1]))
-        #cov_inv = self.cov
+       
 
         e2 = K.dot(e1, K.transpose(cov_inv))
         ex = K.batch_dot(e2, e1, axes=[[1], [1]])
         result = K.exp(-(1 / 2.0) * ex)
 
-        # TODO: Better pruning, is this better =
-        #cov_diags, _ = theano.scan(lambda i: T.diagonal(self.cov[i]),
-        #                           sequences=[T.arange(self.cov.shape[0])])
-
-        #prune = (abs(e1.dimshuffle(0, 'x', 1)) <= (cov_diags * 2.0))
-        #result *= T.bitwise_or(prune[:, :, 0], prune[:, :, 1])  # Pruning
+   
 
 
         # Transpose is super important.
