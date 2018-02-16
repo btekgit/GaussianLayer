@@ -27,9 +27,16 @@ def idx_init(shape, dtype='float32'):
     return idxs
 
 def cov_init(shape, dtype='float32'):
-    cov = np.identity(shape[1], dtype)*0.25
+    
+    cov = np.identity(shape[1], dtype)
     # shape [0] must have self.incoming_channels * self.num_filters
     cov = np.repeat(cov[np.newaxis], shape[0], axis=0)
+    s = np.linspace(0.01, 5, shape[0])
+    for t in range(len(s)):
+        cov[t] = cov[t] * s[t]
+        print(cov[t])
+    
+    
     return cov
 
 class GaussScaler(Layer):
@@ -65,7 +72,7 @@ class GaussScaler(Layer):
         
         self.num_filters = filters
         #self.incoming_channels = incoming_channels
-        print(kwargs)
+       
         super(GaussScaler, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -88,15 +95,12 @@ class GaussScaler(Layer):
                                     axes={channel_axis: input_dim})
         self.built = True
         # Create a trainable weight variable for this layer.
-        cov = np.array([[1., 0.], [0., 1.]])
+        
         kernel_size = self.kernel_size
         # Idxs Init
         
         mu = np.array([kernel_size[0] // 2, kernel_size[1] // 2])
 
-        # Repeat on axes for filters and channels
-        cov = np.repeat(cov[np.newaxis], input_dim * 
-                        self.num_filters, axis=0)
 
         # Convert Types
         self.mu = mu.astype(dtype='float32')
@@ -106,6 +110,8 @@ class GaussScaler(Layer):
         self.cov = self.add_weight(shape=[input_dim*self.filters,2,2], 
                                   name="cov", initializer=cov_init, trainable=True,
                                   constraint=constraints.non_neg())
+        
+        print(self.cov)
         
         # below prepares a meshgrid. 
         self.idxs = self.add_weight(shape=[kernel_size[0]*kernel_size[1],2], 
@@ -117,8 +123,7 @@ class GaussScaler(Layer):
     def U(self):
         
         e1 = (self.idxs - self.mu)
-     
-        
+   
         #print(self.cov.shape)
         #print(len(tf.unstack(self.cov,axis=0)))
         #print( tf.linalg.inv(tf.unstack(self.cov,axis=0)[0]))
@@ -141,7 +146,8 @@ class GaussScaler(Layer):
         # sum normalization each filter has sum 1
         #sums = tf.reduce_sum(masks, axis=(1, 2), keep_dims=True)
         # Sum normalisation
-        #masks = tf.div(masks,sums)
+        #masks = tf.div(masks,sums),
+
         return masks
 
     def call(self, inputs):
@@ -151,7 +157,7 @@ class GaussScaler(Layer):
         print(filters.shape)
         #filters /= T.sum(filters, axis=(2, 3)).dimshuffle(0, 1, 'x', 'x')
         # channel_first means tensofrlow
-        conved = K.conv2d(inputs, filters, padding=self.padding, 
+        conved = K.depthwise_conv2d(inputs, filters, padding=self.padding, 
                                data_format=self.data_format)
         return conved
 
@@ -180,3 +186,46 @@ class GaussScaler(Layer):
                     dilation=self.dilation_rate[i])
                 new_space.append(new_dim)
             return (input_shape[0], self.filters) + tuple(new_space)
+
+
+#test
+def test():
+    import tensorflow as tf
+    from gausslayer import GaussScaler
+    import numpy as np
+    
+    tf.reset_default_graph()
+
+    from keras.losses import mse
+    import keras
+    from keras.datasets import mnist,fashion_mnist, cifar10
+    from keras.models import Sequential, Model
+    from keras.layers import Input, Dense, Dropout, Flatten
+    
+    
+    (x_train, y_train), (x_test, y_test) = mnist.load_data()
+    inputimg = x_train[0]
+    
+    y = y_train[0]
+    sh = (inputimg.shape[0],inputimg.shape[1],1)
+    inputs = Input(shape=sh, name='inputlayer')
+    node_gauss = GaussScaler(rank=2,filters=12,kernel_size=(7,7), 
+                             padding='same',name='gausslayer')(inputs)
+
+    model = Model(inputs=inputs, outputs=node_gauss)
+    sgd = keras.optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(loss=mse, optimizer=sgd, metrics=['accuracy'])
+    model.summary()
+    inputimg2 = np.expand_dims(np.expand_dims(inputimg,axis=0), axis=3)
+    gauss_layer = model.get_layer('gausslayer')    
+    gauss_layer_var = gauss_layer.get_weights()
+    out = gauss_layer.get_output_at(0)
+    
+    scores = model.predict(inputimg2,  verbose=1)
+    print( model.get_layer('gausslayer').output )
+
+#with tf.Session() as sess:
+#    outval = sess.run(out, feed_dict={inputs:inputimg2})
+
+
+
