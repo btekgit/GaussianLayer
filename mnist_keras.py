@@ -15,7 +15,7 @@ session = tf.Session(config=config)
 import keras
 from keras.datasets import mnist,fashion_mnist, cifar10
 from keras.models import Sequential, Model
-from keras.layers import Input, Dense, Dropout, Flatten,AveragePooling2D, Maximum, Subtract
+from keras.layers import Input, Dense, Dropout, Flatten,AveragePooling2D, Maximum, Subtract, UpSampling2D
 from keras.layers import Conv2D, MaxPooling2D, MaxPooling3D,SeparableConv2D, Lambda, Concatenate
 from keras import backend as K
 import tensorflow as tf
@@ -78,9 +78,11 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 node_in  = Input(shape=input_shape)
 #node_s = Dropout(0.1)(node_in)
 enable_gauss = True
+calculate_dog = False
+up_down_sample = True
 if enable_gauss:
-    gauss_filters = 32
-    node_gauss = GaussScaler(rank=2,filters=gauss_filters,kernel_size=(7,7), 
+    gauss_filters = 16
+    node_gauss = GaussScaler(rank=2,filters=gauss_filters,kernel_size=(9,9), 
                           input_shape=input_shape, 
                           padding='same',name='gausslayer')(node_in)
     
@@ -93,26 +95,38 @@ if enable_gauss:
         # separate channels
         g_c= Lambda(lambda x: K.expand_dims(x[:,:,:,i],axis=3), name='ChannelSeparator'+str(i))(node_gauss)
         
-        g_c_shape = input_shape
         
+        # downsample Gaussian layers, however leave the first one as it is. 
+        # we want a clear input as well
+        # this may be controlled by the cov_scaler value.
+        if up_down_sample and i>4:
+            g_c = AveragePooling2D(pool_size=(2,2))(g_c)
+            
+            
+        
+        g_c_shape = input_shape
         gaussian_channels.append(g_c)
         
-        
+        # conv with filter
         node_conv_gc = Conv2D(64, kernel_size=(3, 3), padding='same',
                      activation='relu', input_shape=input_shape)(g_c)
+        
+        if up_down_sample and i>4:
+            node_conv_gc = UpSampling2D(size=(2,2))(node_conv_gc)
         
         conv_channels.append(node_conv_gc)
         
         # this calculates scale-space with DoG
-        if i >0:
+        if i >0 and calculate_dog:
             diff_layer = Subtract()([g_c,gaussian_channels[i-1]])
             diff_channels.append(diff_layer)
         
     
     # depthwise pooling layer
-    #node_conv1 = Maximum(name='merge')(diff_channels) 
-    
-    node_conv1 = Concatenate(name='merge',axis=-1)(diff_channels)
+    if not calculate_dog:
+        node_conv1 = Maximum(name='merge')(conv_channels)
+    else:
+        node_conv1 = Concatenate(name='merge',axis=-1)(diff_channels)
     
     
     
@@ -130,12 +144,12 @@ else:
     node_conv1 = Conv2D(64, kernel_size=(3, 3),
                      activation='relu', input_shape=input_shape)(node_in)
 
-#node_mx_pool1= MaxPooling2D(pool_size=(2, 2))(node_conv1)
-node_avg_pool= AveragePooling2D(pool_size=(2, 2))(node_conv1)
-node_conv2 = Conv2D(64, (3, 3), activation='relu')(node_avg_pool)
+node_pool1= MaxPooling2D(pool_size=(2, 2))(node_conv1)
+#node_pool1= AveragePooling2D(pool_size=(2, 2))(node_conv1)
+node_conv2 = Conv2D(64, (3, 3), activation='relu')(node_pool1)
 node_mxpool2 = MaxPooling2D(pool_size=(2, 2))(node_conv2)
 node_drp1 =Dropout(0.25)(node_mxpool2)
-#node_drp1 =Dropout(0.25)(node_conv1)
+
 node_flt= Flatten()(node_drp1)
 node_dns1=Dense(128, activation='relu')(node_flt)
 node_drp=Dropout(0.5)(node_dns1)
@@ -156,8 +170,9 @@ tb_call_back = keras.callbacks.TensorBoard(log_dir=logdir,
 
 #toptimizer = keras.optimizers.Nadam(lr=0.0002, beta_1=0.9, beta_2=0.999, epsilon=None, schedule_decay=0.004)
 toptimizer = keras.optimizers.Adadelta()
+loss_funct = keras.losses.mse # keras.losses.categorical_crossentropy
 #toptimizer = keras.optimizers.SGD(lr=0.05)
-model.compile(loss=keras.losses.categorical_crossentropy,
+model.compile(loss=loss_funct,
               optimizer=toptimizer,
               metrics=['accuracy'])
 if enable_gauss:
@@ -180,7 +195,7 @@ if enable_gauss:
 
 model.fit(x_train, y_train,
           batch_size=batch_size,
-          epochs=75,
+          epochs=175,
           verbose=1,
           validation_data=(x_test, y_test), callbacks=[tb_call_back])
 
